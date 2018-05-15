@@ -1,10 +1,15 @@
 import request from "request";
 import async from "async";
+import fs from "fs";
 import * as _ from "lodash";
 import { requestHeaders, rootUrl, dbClient } from "./config";
 import { productDataQuery } from "./queries";
 
 let importCount = 0;
+let totalImportedData = 0;
+let totalIgnoredData = 0;
+
+let productEntities = {};
 
 const importDataValues = async callback => {
   try {
@@ -12,14 +17,28 @@ const importDataValues = async callback => {
 
     async.mapLimit(
       facilityList,
-      50,
+      15,
       async.reflect(importDataByFacility),
-      (err, result) => {
-        callback(null, result);
+      (err, results) => {
+        if (!err) {
+          totalImportedData += _.reduce(
+            _.map(results, result => result.value.imported || 0),
+            (sum, n) => sum + n
+          );
+
+          totalIgnoredData += _.reduce(
+            _.map(results, result => result.value.ignored || 0),
+            (sum, n) => sum + n
+          );
+
+          callback(null, { totalImportedData, totalIgnoredData });
+        } else {
+          callback(err, null);
+        }
       }
     );
   } catch (e) {
-    console.error(e);
+    callback(e, null);
   }
 };
 
@@ -36,17 +55,128 @@ const importDataByFacility = async (facility, callback) => {
 
   async.mapLimit(
     productDataArray,
-    50,
-    async.reflect(importDataByProduct),
-    (err, result) => {
-      callback(null, result);
+    15,
+    async.reflect(prepareDataValuesForImportByProduct),
+    (err, dataValuesResponse) => {
+      if (err) {
+        callback(err, null);
+      } else {
+        if (dataValuesResponse.length > 0) {
+          const dataValues = _.flatten(
+            _.map(dataValuesResponse, dataValue => dataValue.value)
+          );
+          console.log("Importing data for facility with id " + facility.id);
+          dataValueImport({ dataValues }).then(
+            res => {
+              console.log(
+                "Data for facility with id " +
+                  facility.id +
+                  " imported successfully"
+              );
+              const imported = callback(null, {
+                imported: res.importCount
+                  ? (res.importCount.updated || 0) +
+                    (res.importCount.imported || 0)
+                  : 0,
+                ignored: res.importCount ? res.importCount.ignored || 0 : 0
+              });
+            },
+            err => {
+              console.log(
+                "Data import failed, dataValues have been saved in local files"
+              );
+              fs.writeFile(
+                "data-values/" + facility.id + ".json",
+                JSON.stringify({ dataValues }),
+                err => {
+                  if (err) {
+                    console.log(err);
+                  } else {
+                    console.log("Successfully Written to File.");
+                  }
+                }
+              );
+              callback(err, "Fail");
+            }
+          );
+        } else {
+          callback(null, {
+            imported: 0,
+            ignored: 0
+          });
+        }
+      }
     }
   );
 };
 
+const prepareDataValuesForImportByProduct = async (productData, callback) => {
+  console.log(
+    "Preparing data for products with code prefixed by " +
+      productData.productCode +
+      " for facility with id " +
+      productData.facilityId
+  );
+  try {
+    const associatedProducts = await findAssociatedProducts(
+      productData.productCode
+    );
+
+    const dataValues = [];
+
+    _.each(productData.rnr, rnr => {
+      const periods = getProperPeriod(
+        new Date(rnr.startdate),
+        new Date(rnr.enddate)
+      );
+
+      _.each(periods, period => {
+        _.each(associatedProducts, product => {
+          if (product.code.indexOf("_CO") > -1 && rnr.amc && rnr.amc !== 0) {
+            dataValues.push({
+              dataElement: product.id,
+              period: period,
+              orgUnit: productData.facilityId,
+              value: rnr.amc ? rnr.amc.toString() : "0"
+            });
+          } else if (
+            product.code.indexOf("_BA") > -1 &&
+            rnr.stockinhand &&
+            rnr.stockinhand !== 0
+          ) {
+            dataValues.push({
+              dataElement: product.id,
+              period: period,
+              orgUnit: productData.facilityId,
+              value: rnr.stockinhand
+                ? (rnr.stockinhand / 3).toFixed(0).toString()
+                : "0"
+            });
+          } else if (
+            product.code.indexOf("_ORD") > -1 &&
+            rnr.quantityrequested &&
+            rnr.quantityrequested !== 0
+          ) {
+            dataValues.push({
+              dataElement: product.id,
+              period: period,
+              orgUnit: productData.facilityId,
+              value: rnr.stockinhand ? rnr.quantityrequested : "0"
+            });
+          }
+        });
+      });
+    });
+
+    callback(null, dataValues);
+  } catch (e) {
+    callback(e, null);
+  }
+};
+
 const importDataByProduct = async (productData, callback) => {
   console.log(
-    "Preparing data for product with code " +
+    "Preparing data for products with code prefixed by " +
       productData.productCode +
       " for facility with id " +
       productData.facilityId
@@ -148,24 +278,32 @@ const dataValueImport = dataValues => {
 
 const findAssociatedProducts = productCode => {
   return new Promise((resolve, reject) => {
-    request(
-      {
-        headers: requestHeaders,
-        url:
-          rootUrl +
-          "/api/dataElements.json?fields=id,name,code&filter=code:ilike:" +
-          productCode +
-          "&paging=false",
-        method: "GET"
-      },
-      function(err, res, body) {
-        if (!err) {
-          resolve(JSON.parse(body)["dataElements"]);
-        } else {
-          reject(err);
+    const localProducts = productEntities[productCode];
+
+    if (localProducts) {
+      resolve(localProducts);
+    } else {
+      request(
+        {
+          headers: requestHeaders,
+          url:
+            rootUrl +
+            "/api/dataElements.json?fields=id,name,code&filter=code:ilike:" +
+            productCode +
+            "&paging=false",
+          method: "GET"
+        },
+        function(err, res, body) {
+          if (!err) {
+            const productResult = JSON.parse(body)["dataElements"];
+            productEntities[productCode] = productResult;
+            resolve(productResult);
+          } else {
+            reject(err);
+          }
         }
-      }
-    );
+      );
+    }
   });
 };
 

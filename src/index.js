@@ -7,6 +7,11 @@ console.log("Connecting to ELMIS database...");
 dbClient.connect();
 console.log("Successfully connected to ELMIS database ...");
 
+const startDate = new Date();
+
+const startTime = startDate.getTime();
+console.log("Process started at " + startDate.toTimeString());
+
 importPrograms((programError, programResult) => {
   // Programs result
   if (!programError) {
@@ -26,8 +31,22 @@ importPrograms((programError, programResult) => {
       console.log(
         productResult.length + " Products have been imported successfully"
       );
+
       importDataValues((err, result) => {
-        console.log(result);
+        if (!err) {
+          console.log(result.totalImportedData + " data values imported");
+          console.log(result.totalIgnoredData + " data values ignored");
+          const completedDate = new Date();
+
+          const complitedTime = completedDate.getTime();
+          console.log("Process completed at " + completedDate.toTimeString());
+          const diff = (complitedTime - startTime) / 1000 / 60;
+          console.log(
+            "Process took " + Math.abs(Math.round(diff)) + " minutes"
+          );
+        } else {
+          console.log("Data import has encountered error. (ERROR) " + err);
+        }
       });
     } else {
       console.error(
@@ -36,7 +55,3 @@ importPrograms((programError, programResult) => {
     }
   });
 });
-
-// importDataValues((err, result) => {
-//   console.log(result);
-// });
