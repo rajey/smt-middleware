@@ -32,7 +32,8 @@ const getSanitizedProducts = products => {
       programcode: product.programcode + "_co",
       name: getProductName(product, "Consumption"),
       shortName: product.code + "_" + "CO",
-      categoryCombo: { id: "bjDvmb4bfuf" }
+      categoryCombo: { id: "bjDvmb4bfuf" },
+      zeroIsSignificant: true
     });
     newProducts.push({
       aggregationType: "SUM",
@@ -42,7 +43,8 @@ const getSanitizedProducts = products => {
       programcode: product.programcode + "_ba",
       name: getProductName(product, "Ending/Closing Balance"),
       shortName: product.code + "_" + "BA",
-      categoryCombo: { id: "bjDvmb4bfuf" }
+      categoryCombo: { id: "bjDvmb4bfuf" },
+      zeroIsSignificant: true
     });
 
     newProducts.push({
@@ -53,7 +55,8 @@ const getSanitizedProducts = products => {
       programcode: product.programcode + "_itr",
       name: getProductName(product, "Ordered"),
       shortName: product.code + "_" + "ORD",
-      categoryCombo: { id: "bjDvmb4bfuf" }
+      categoryCombo: { id: "bjDvmb4bfuf" },
+      zeroIsSignificant: true
     });
   });
 
@@ -89,7 +92,10 @@ const createOrUpdateProduct = async (product, callback) => {
         productResult => {
           if (productResult) {
             // Update product if available
-            updateProduct({ ...productResult, ...product }).then(
+            updateProduct({
+              ...product,
+              ...productResult
+            }).then(
               updatedProduct => {
                 resolve(updatedProduct);
               },
